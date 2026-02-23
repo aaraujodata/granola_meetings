@@ -252,9 +252,13 @@ def main():
         log.info("Limiting to %d documents", len(documents))
 
     # ── Load progress for resume ───────────────────────────────────────
-    completed = set() if args.no_resume else load_progress()
+    # Bypass resume when the user explicitly filters with --since or --ids
+    skip_resume = args.no_resume or args.since or args.ids
+    completed = set() if skip_resume else load_progress()
     remaining = [d for d in documents if d.id not in completed]
 
+    if skip_resume and not args.no_resume:
+        log.info("Explicit filter detected (--since/--ids), bypassing resume progress")
     if completed:
         log.info("Resuming: %d already exported, %d remaining", len(completed), len(remaining))
 

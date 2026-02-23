@@ -38,8 +38,13 @@ export interface SearchResult {
   snippet: string;
 }
 
-export type PipelineAction = "export" | "index" | "process" | "sync";
+export type PipelineAction = "export" | "index" | "process" | "sync" | "refresh";
 export type JobStatusType = "queued" | "running" | "completed" | "failed";
+
+export interface PipelineParams {
+  since?: string;
+  limit?: number;
+}
 
 export interface LogEntry {
   timestamp: string;
@@ -68,6 +73,7 @@ export interface JobResponse {
   error_count: number;
   current_step: string | null;
   steps_completed: string[];
+  params: Record<string, string | number> | null;
 }
 
 export interface StatusResponse {

@@ -3,6 +3,7 @@
 import type { JobResponse } from "@/types";
 
 const SYNC_STEPS = ["export", "index", "process"];
+const REFRESH_STEPS = ["export", "index"];
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -23,7 +24,10 @@ export default function JobProgressBar({ job, elapsed }: JobProgressBarProps) {
       : null;
 
   const duration = job.duration_seconds ?? elapsed;
-  const isSyncJob = job.action === "sync";
+  const steps =
+    job.action === "sync" ? SYNC_STEPS :
+    job.action === "refresh" ? REFRESH_STEPS :
+    null;
 
   return (
     <div className="space-y-2">
@@ -45,10 +49,10 @@ export default function JobProgressBar({ job, elapsed }: JobProgressBarProps) {
         </div>
       )}
 
-      {/* Sync step tracker */}
-      {isSyncJob && (
+      {/* Step tracker (sync / refresh) */}
+      {steps && (
         <div className="flex items-center gap-1 text-xs">
-          {SYNC_STEPS.map((step, i) => {
+          {steps.map((step, i) => {
             const isCompleted = job.steps_completed?.includes(step);
             const isCurrent = job.current_step === step;
             let className =

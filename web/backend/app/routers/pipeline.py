@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query
 
 from app.dependencies import get_redis, get_arq_pool
-from app.schemas import PipelineAction, JobResponse, JobStatus, LogEntry, JobLogsResponse
+from app.schemas import PipelineAction, PipelineParams, JobResponse, JobStatus, LogEntry, JobLogsResponse
 
 router = APIRouter(tags=["pipeline"])
 
@@ -16,12 +16,19 @@ LOG_KEY_PREFIX = "granola:job:"
 
 
 @router.post("/pipeline/{action}", response_model=JobResponse)
-async def trigger_pipeline(action: PipelineAction):
+async def trigger_pipeline(action: PipelineAction, params: PipelineParams | None = None):
+    # Validate: refresh requires 'since'
+    if action == PipelineAction.refresh:
+        if not params or not params.since:
+            raise HTTPException(status_code=422, detail="'since' is required for refresh action")
+
     redis = await get_redis()
     arq = await get_arq_pool()
 
     job_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
+
+    params_dict = params.model_dump(exclude_none=True) if params else None
 
     job_data = {
         "job_id": job_id,
@@ -37,6 +44,7 @@ async def trigger_pipeline(action: PipelineAction):
         "error_count": 0,
         "current_step": None,
         "steps_completed": [],
+        "params": params_dict,
     }
     await redis.set(
         f"{JOB_KEY_PREFIX}{job_id}",
@@ -50,7 +58,10 @@ async def trigger_pipeline(action: PipelineAction):
 
     # Enqueue ARQ job
     task_name = f"task_{action.value}"
-    await arq.enqueue_job(task_name, _job_id=job_id)
+    if params_dict:
+        await arq.enqueue_job(task_name, params_dict, _job_id=job_id)
+    else:
+        await arq.enqueue_job(task_name, _job_id=job_id)
 
     return JobResponse(**job_data)
 

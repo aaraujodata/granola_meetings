@@ -7,7 +7,7 @@ import PipelineControls from "@/components/PipelineControls";
 import JobStatusBadge from "@/components/JobStatusBadge";
 import JobProgressBar from "@/components/JobProgressBar";
 import LogViewer from "@/components/LogViewer";
-import type { PipelineAction, JobResponse, LogEntry } from "@/types";
+import type { PipelineAction, PipelineParams, JobResponse, LogEntry } from "@/types";
 
 function useElapsed(startedAt: string | null | undefined, isActive: boolean) {
   const [elapsed, setElapsed] = useState(0);
@@ -61,12 +61,12 @@ export default function PipelinePage() {
     }
   }, [polledJob]);
 
-  const handleTrigger = async (action: PipelineAction) => {
+  const handleTrigger = async (action: PipelineAction, params?: PipelineParams) => {
     setError(null);
     setShowLogs(true);
     setExpandedJobId(null);
     try {
-      const job = await triggerPipeline(action);
+      const job = await triggerPipeline(action, params);
       setActiveJobId(job.job_id);
       fetchJobs();
     } catch (err) {
@@ -156,6 +156,11 @@ export default function PipelinePage() {
                       <span className="text-sm font-medium text-gray-900">
                         {job.action}
                       </span>
+                      {job.action === "refresh" && job.params?.since && (
+                        <span className="ml-1 text-xs text-blue-600">
+                          (since {job.params.since})
+                        </span>
+                      )}
                       <span className="ml-2 text-xs text-gray-400">
                         {new Date(job.created_at).toLocaleString()}
                       </span>

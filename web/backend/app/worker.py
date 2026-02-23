@@ -243,7 +243,111 @@ async def task_sync(ctx):
         _remove_log_handler(handler)
 
 
+async def task_refresh(ctx, params: dict | None = None):
+    """Run export (with --since/--limit) → index sequentially with step tracking."""
+    job_id = ctx["job_id"]
+    start = time.monotonic()
+    now = datetime.now(timezone.utc).isoformat()
+    await _update_job(ctx, "running", extra={
+        "started_at": now,
+        "current_step": "export",
+        "steps_completed": [],
+    })
+
+    handler = _install_log_handler(job_id)
+    try:
+        loop = asyncio.get_event_loop()
+        original_argv = sys.argv
+
+        # Step 1: Export with --since (and optional --limit)
+        await _update_job(ctx, "running", extra={"current_step": "export"})
+        from scripts.export_all import main as export_main
+        argv = ["export_all"]
+        if params and params.get("since"):
+            argv += ["--since", params["since"]]
+        if params and params.get("limit"):
+            argv += ["--limit", str(params["limit"])]
+        sys.argv = argv
+        await loop.run_in_executor(None, export_main)
+        await _update_job(ctx, "running", extra={
+            "current_step": "index",
+            "steps_completed": ["export"],
+        })
+
+        # Step 2: Rebuild index
+        from scripts.build_index import main as index_main
+        sys.argv = ["build_index", "--rebuild"]
+        await loop.run_in_executor(None, index_main)
+
+        sys.argv = original_argv
+        wide = handler.get_wide_event()
+        duration = time.monotonic() - start
+        since_label = params.get("since", "") if params else ""
+        await _update_job(ctx, "completed", f"Refresh finished successfully (since {since_label})", extra={
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "duration_seconds": round(duration, 2),
+            "current_step": None,
+            "steps_completed": ["export", "index"],
+            **wide,
+        })
+    except Exception as e:
+        sys.argv = original_argv
+        wide = handler.get_wide_event()
+        duration = time.monotonic() - start
+        log.error("Refresh task failed: %s", e)
+        await _update_job(ctx, "failed", str(e), extra={
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "duration_seconds": round(duration, 2),
+            **wide,
+        })
+        raise
+    finally:
+        _remove_log_handler(handler)
+
+
+async def on_startup(ctx):
+    """Log registered functions on worker startup for traceability."""
+    log.info("ARQ worker starting up")
+    log.info("Registered task functions: %s", [f.__name__ for f in WorkerSettings.functions])
+
+    # Reconcile stale jobs: if ARQ already failed a job but our tracking still says
+    # queued/running, mark it as failed so the UI reflects the real state.
+    # Note: ARQ's redis (ctx["redis"]) returns bytes, not strings.
+    redis = ctx["redis"]
+    raw_ids = await redis.lrange("granola:recent_jobs", 0, 49)
+    for raw_jid in raw_ids:
+        jid = raw_jid.decode() if isinstance(raw_jid, bytes) else raw_jid
+        raw = await redis.get(f"{JOB_KEY_PREFIX}{jid}")
+        if not raw:
+            continue
+        raw_str = raw.decode() if isinstance(raw, bytes) else raw
+        data = json.loads(raw_str)
+        if data["status"] not in ("queued", "running"):
+            continue
+        # Check if ARQ already has a result for this job (meaning it finished/failed)
+        arq_result = await redis.get(f"arq:result:{jid}")
+        if arq_result:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            reason = "Job failed before task execution (likely worker restarted or function not found)"
+            log.warning("Reconciling stale job %s (was '%s', ARQ already has result) -> marking as failed", jid, data["status"])
+            data["status"] = "failed"
+            data["result"] = reason
+            data["completed_at"] = now_iso
+            await redis.set(f"{JOB_KEY_PREFIX}{jid}", json.dumps(data), ex=86400)
+            # Write log entries so the UI has something to show
+            log_key = f"{JOB_KEY_PREFIX}{jid}:logs"
+            log_entries = [
+                json.dumps({"timestamp": now_iso, "level": "ERROR", "message": reason, "logger": "arq.worker"}),
+                json.dumps({"timestamp": now_iso, "level": "INFO", "message": f"Task '{data.get('action')}' was not registered in the worker when this job was enqueued. The worker has been restarted with the correct functions. Please re-trigger the job.", "logger": "arq.worker"}),
+            ]
+            for entry in log_entries:
+                await redis.rpush(log_key, entry)
+            await redis.expire(log_key, 86400)
+    log.info("Startup reconciliation complete")
+
+
 class WorkerSettings:
     redis_settings = RedisSettings()
-    functions = [task_export, task_index, task_process, task_sync]
+    functions = [task_export, task_index, task_process, task_sync, task_refresh]
+    on_startup = on_startup
     max_jobs = 1

@@ -59,6 +59,12 @@ class PipelineAction(str, Enum):
     index = "index"
     process = "process"
     sync = "sync"
+    refresh = "refresh"
+
+
+class PipelineParams(BaseModel):
+    since: str | None = None
+    limit: int | None = None
 
 
 class JobStatus(str, Enum):
@@ -95,6 +101,7 @@ class JobResponse(BaseModel):
     error_count: int = 0
     current_step: str | None = None
     steps_completed: list[str] = Field(default_factory=list)
+    params: dict | None = None
 
 
 class StatusResponse(BaseModel):
