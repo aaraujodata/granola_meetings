@@ -188,3 +188,8 @@ Now returns wide-event fields:
 | `granola:job:{id}` | string (JSON) | 86400s | Job metadata + wide event |
 | `granola:job:{id}:logs` | list (JSON entries) | 86400s | Ordered log entries |
 | `granola:recent_jobs` | list (job IDs) | none | Last 50 job IDs for listing |
+| `arq:result:{id}` | string (msgpack) | varies | ARQ internal result (used for startup reconciliation) |
+
+## Related: Startup Reconciliation
+
+See `ctx-02-23-26-date-filtered-refresh-and-job-reconciliation.md` for the fix to "ghost jobs" — when ARQ fails internally (function not found, worker crash), the `on_startup` hook reconciles stale `queued`/`running` jobs by cross-checking `arq:result:{id}` and writing explanatory log entries.

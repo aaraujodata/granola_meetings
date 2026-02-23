@@ -31,7 +31,6 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
 parts/
 sdist/
@@ -301,8 +300,5 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python,django,nextjs
 
-processed/
-meetings/
-docs/
-db/
-gronal_*$
+# Note: processed/, meetings/, docs/, db/ rules belong in root .gitignore only
+# They were removed from here to avoid ignoring Next.js src/app/meetings/ route
