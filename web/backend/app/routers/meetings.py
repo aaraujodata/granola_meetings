@@ -136,6 +136,7 @@ def _find_meeting_dir(meeting_id: str, date: str, title: str) -> Path | None:
         return None
 
     # Look for directory starting with the date
+    candidates = []
     for d in month_dir.iterdir():
         if d.is_dir() and d.name.startswith(date):
             # Verify by checking frontmatter granola_id in any .md file
@@ -146,8 +147,11 @@ def _find_meeting_dir(meeting_id: str, date: str, title: str) -> Path | None:
                 meta, _ = _parse_frontmatter(text)
                 if meta.get("granola_id") == meeting_id:
                     return d
-            # Fallback: if directory starts with date, assume match
-            return d
+            candidates.append(d)
+
+    # Fallback: if only one directory matches the date, assume it's correct
+    if len(candidates) == 1:
+        return candidates[0]
 
     return None
 
