@@ -304,4 +304,5 @@ pyrightconfig.json
 /processed/
 /meetings/
 /db/
+/exports/
 gronal_*$
