@@ -1,0 +1,80 @@
+services:
+  # ── Message broker ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── FastAPI backend ─────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: web/backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      # Persist SQLite databases and exported meetings across restarts
+      - ./db:/app/db
+      - ./meetings:/app/meetings
+      - ./exports:/app/exports
+      # Granola auth token (read-only from host)
+      - ~/Library/Application Support/Granola/supabase.json:/root/Library/Application Support/Granola/supabase.json:ro
+      # Custom CA certificates for corporate proxy/SSL (drop .pem files in .ca-certs/)
+      - ./.ca-certs:/app/.ca-certs:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --reload-dir /app/web/backend
+      --reload-dir /app/src
+
+  # ── ARQ worker (processes queued jobs) ──────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: web/backend/Dockerfile
+    environment:
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./db:/app/db
+      - ./meetings:/app/meetings
+      - ./exports:/app/exports
+      # Granola auth token (read-only from host)
+      - ~/Library/Application Support/Granola/supabase.json:/root/Library/Application Support/Granola/supabase.json:ro
+      # Custom CA certificates for corporate proxy/SSL (drop .pem files in .ca-certs/)
+      - ./.ca-certs:/app/.ca-certs:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: python -m arq app.worker.WorkerSettings
+
+  # ── Next.js frontend ───────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: web/frontend/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      # Server-side rewrites target the backend service
+      - BACKEND_URL=http://backend:8000
+      # Client-side API calls go through the Next.js rewrite proxy
+      - NEXT_PUBLIC_API_URL=/api
+    depends_on:
+      - backend
+
+volumes:
+  redis-data:

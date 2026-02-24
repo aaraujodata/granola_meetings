@@ -1,4 +1,8 @@
-"""ARQ worker: async task definitions for pipeline operations."""
+"""ARQ worker: async task definitions for pipeline operations.
+
+Each task emits a canonical wide event (one structured log line per job)
+at completion, following the wide events / canonical log line pattern.
+"""
 
 import asyncio
 import json
@@ -13,8 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from arq.connections import RedisSettings
-
+from app.dependencies import REDIS_URL, _parse_redis_settings
 from app.log_handler import JobLogHandler
 
 logging.basicConfig(
@@ -25,7 +28,6 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 JOB_KEY_PREFIX = "granola:job:"
-REDIS_URL = "redis://localhost:6379"
 
 
 def _install_log_handler(job_id: str) -> JobLogHandler:
@@ -61,6 +63,36 @@ async def _update_job(ctx, status: str, result: str | None = None, extra: dict |
         await redis.set(f"{JOB_KEY_PREFIX}{job_id}", json.dumps(data), ex=86400)
 
 
+def _emit_canonical_log(*, action: str, job_id: str, outcome: str, duration: float,
+                        wide: dict, params: dict | None = None, error: str | None = None):
+    """Emit one structured canonical log line per job — the wide event.
+
+    This is the single observability event for the entire job execution.
+    It contains everything needed to debug or analyze the job without
+    reading individual log lines.
+    """
+    event = {
+        "event": "job_completed",
+        "action": action,
+        "job_id": job_id,
+        "outcome": outcome,
+        "duration_seconds": round(duration, 2),
+        "items_processed": wide.get("items_processed", 0),
+        "items_total": wide.get("items_total", 0),
+        "error_count": wide.get("error_count", 0),
+        "warning_count": wide.get("warning_count", 0),
+        "log_line_count": wide.get("log_line_count", 0),
+        "commit_hash": wide.get("commit_hash", "unknown"),
+        "python_version": wide.get("python_version", ""),
+    }
+    if params:
+        event["params"] = params
+    if error:
+        event["error"] = error
+
+    log.info(json.dumps(event))
+
+
 async def task_export(ctx):
     """Run scripts/export_all.main() in a thread executor."""
     job_id = ctx["job_id"]
@@ -86,15 +118,16 @@ async def task_export(ctx):
             "duration_seconds": round(duration, 2),
             **wide,
         })
+        _emit_canonical_log(action="export", job_id=job_id, outcome="success", duration=duration, wide=wide)
     except Exception as e:
         wide = handler.get_wide_event()
         duration = time.monotonic() - start
-        log.error("Export task failed: %s", e)
         await _update_job(ctx, "failed", str(e), extra={
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "duration_seconds": round(duration, 2),
             **wide,
         })
+        _emit_canonical_log(action="export", job_id=job_id, outcome="error", duration=duration, wide=wide, error=str(e))
         raise
     finally:
         _remove_log_handler(handler)
@@ -125,15 +158,16 @@ async def task_index(ctx):
             "duration_seconds": round(duration, 2),
             **wide,
         })
+        _emit_canonical_log(action="index", job_id=job_id, outcome="success", duration=duration, wide=wide)
     except Exception as e:
         wide = handler.get_wide_event()
         duration = time.monotonic() - start
-        log.error("Index task failed: %s", e)
         await _update_job(ctx, "failed", str(e), extra={
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "duration_seconds": round(duration, 2),
             **wide,
         })
+        _emit_canonical_log(action="index", job_id=job_id, outcome="error", duration=duration, wide=wide, error=str(e))
         raise
     finally:
         _remove_log_handler(handler)
@@ -164,22 +198,23 @@ async def task_process(ctx):
             "duration_seconds": round(duration, 2),
             **wide,
         })
+        _emit_canonical_log(action="process", job_id=job_id, outcome="success", duration=duration, wide=wide)
     except Exception as e:
         wide = handler.get_wide_event()
         duration = time.monotonic() - start
-        log.error("Process task failed: %s", e)
         await _update_job(ctx, "failed", str(e), extra={
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "duration_seconds": round(duration, 2),
             **wide,
         })
+        _emit_canonical_log(action="process", job_id=job_id, outcome="error", duration=duration, wide=wide, error=str(e))
         raise
     finally:
         _remove_log_handler(handler)
 
 
 async def task_sync(ctx):
-    """Run export → index → process sequentially with step tracking."""
+    """Run export -> index -> process sequentially with step tracking."""
     job_id = ctx["job_id"]
     start = time.monotonic()
     now = datetime.now(timezone.utc).isoformat()
@@ -190,9 +225,9 @@ async def task_sync(ctx):
     })
 
     handler = _install_log_handler(job_id)
+    original_argv = sys.argv
     try:
         loop = asyncio.get_event_loop()
-        original_argv = sys.argv
 
         # Step 1: Export
         await _update_job(ctx, "running", extra={"current_step": "export"})
@@ -228,23 +263,24 @@ async def task_sync(ctx):
             "steps_completed": ["export", "index", "process"],
             **wide,
         })
+        _emit_canonical_log(action="sync", job_id=job_id, outcome="success", duration=duration, wide=wide)
     except Exception as e:
         sys.argv = original_argv
         wide = handler.get_wide_event()
         duration = time.monotonic() - start
-        log.error("Sync task failed: %s", e)
         await _update_job(ctx, "failed", str(e), extra={
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "duration_seconds": round(duration, 2),
             **wide,
         })
+        _emit_canonical_log(action="sync", job_id=job_id, outcome="error", duration=duration, wide=wide, error=str(e))
         raise
     finally:
         _remove_log_handler(handler)
 
 
 async def task_refresh(ctx, params: dict | None = None):
-    """Run export (with --since/--limit) → index sequentially with step tracking."""
+    """Run export (with --since/--limit) -> index sequentially with step tracking."""
     job_id = ctx["job_id"]
     start = time.monotonic()
     now = datetime.now(timezone.utc).isoformat()
@@ -255,9 +291,9 @@ async def task_refresh(ctx, params: dict | None = None):
     })
 
     handler = _install_log_handler(job_id)
+    original_argv = sys.argv
     try:
         loop = asyncio.get_event_loop()
-        original_argv = sys.argv
 
         # Step 1: Export with --since (and optional --limit)
         await _update_job(ctx, "running", extra={"current_step": "export"})
@@ -290,16 +326,17 @@ async def task_refresh(ctx, params: dict | None = None):
             "steps_completed": ["export", "index"],
             **wide,
         })
+        _emit_canonical_log(action="refresh", job_id=job_id, outcome="success", duration=duration, wide=wide, params=params)
     except Exception as e:
         sys.argv = original_argv
         wide = handler.get_wide_event()
         duration = time.monotonic() - start
-        log.error("Refresh task failed: %s", e)
         await _update_job(ctx, "failed", str(e), extra={
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "duration_seconds": round(duration, 2),
             **wide,
         })
+        _emit_canonical_log(action="refresh", job_id=job_id, outcome="error", duration=duration, wide=wide, params=params, error=str(e))
         raise
     finally:
         _remove_log_handler(handler)
@@ -347,7 +384,7 @@ async def on_startup(ctx):
 
 
 class WorkerSettings:
-    redis_settings = RedisSettings()
+    redis_settings = _parse_redis_settings()
     functions = [task_export, task_index, task_process, task_sync, task_refresh]
     on_startup = on_startup
     max_jobs = 1
