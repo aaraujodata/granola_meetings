@@ -120,12 +120,15 @@ def main():
                         help="Drop and rebuild the entire index")
     args = parser.parse_args()
 
-    if args.rebuild and SEARCH_DB_PATH.exists():
-        log.info("Removing existing database for rebuild...")
-        SEARCH_DB_PATH.unlink()
-
     db = SearchDB()
     db.initialize()
+
+    if args.rebuild:
+        log.info("Clearing existing data for rebuild...")
+        conn = db._connect()
+        for table in ["search_index", "notes", "summaries", "transcripts", "meetings"]:
+            conn.execute(f"DELETE FROM {table}")
+        conn.commit()
 
     if not MEETINGS_DIR.exists():
         log.error("No meetings/ directory found. Run export first.")
