@@ -301,15 +301,11 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python,django,nextjs
 
-<<<<<<< Updated upstream
-/processed/
-/meetings/
-/db/
-/exports/
-=======
 processed/
 meetings/
-docs/
 db/
 exports/
-gronal_*$
+
+# Video project
+video/node_modules/
+video/out/

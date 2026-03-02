@@ -1,0 +1,31 @@
+{
+  "name": "granola-promo-video",
+  "private": true,
+  "sideEffects": [
+    "*.css"
+  ],
+  "scripts": {
+    "dev": "remotion studio",
+    "render": "remotion render PromoVideo out/promo.mp4",
+    "render:scene": "remotion render",
+    "build": "remotion bundle",
+    "upgrade": "remotion upgrade"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.429",
+    "@remotion/google-fonts": "4.0.429",
+    "@remotion/media": "^4.0.429",
+    "@remotion/transitions": "4.0.429",
+    "@remotion/zod-types": "4.0.429",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "remotion": "4.0.429",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@remotion/tailwind-v4": "4.0.429",
+    "@types/react": "19.0.0",
+    "tailwindcss": "4.0.0",
+    "typescript": "5.7.3"
+  }
+}

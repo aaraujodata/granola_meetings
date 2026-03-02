@@ -25,6 +25,11 @@
       "source": "vercel-labs/next-skills",
       "sourceType": "github",
       "computedHash": "be6bbf6ab1dc2cc6f2505cea52d497920c04f5b532c0846ee201f6029b803fb0"
+    },
+    "remotion-best-practices": {
+      "source": "remotion-dev/skills",
+      "sourceType": "github",
+      "computedHash": "a2ebe92433006ce81bbdcfe24984663678bbbb20991a3686e34814de1097c44c"
     }
   }
 }

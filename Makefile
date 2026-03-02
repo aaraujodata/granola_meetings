@@ -93,6 +93,16 @@ sync: ## Full pipeline: export + index + process
 status: ## Show token and database stats
 	python granola_pipeline.py status
 
+# ─── Video (Remotion) ────────────────────────────────────────────
+
+.PHONY: video-studio
+video-studio: ## Open Remotion Studio for the promo video
+	cd video && npx remotion studio
+
+.PHONY: render-video
+render-video: ## Render the promo video to video/out/promo.mp4
+	cd video && npx remotion render PromoVideo out/promo.mp4
+
 # ─── SSL / Corporate proxy ────────────────────────────────────────
 
 .PHONY: setup-ssl
