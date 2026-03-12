@@ -77,11 +77,12 @@ def list_meetings(
     count_sql = f"SELECT COUNT(*) FROM meetings {where}"
     total = conn.execute(count_sql, params).fetchone()[0]
 
-    # Paginated results
+    # Paginated results — sort by created_at (full timestamp) for correct
+    # intra-day ordering, falling back to date for rows without created_at.
     sql = f"""
-        SELECT id, title, date FROM meetings
+        SELECT id, title, date, created_at FROM meetings
         {where}
-        ORDER BY date DESC
+        ORDER BY COALESCE(created_at, date) DESC
         LIMIT ? OFFSET ?
     """
     rows = conn.execute(sql, params + [limit, offset]).fetchall()
@@ -91,6 +92,7 @@ def list_meetings(
         meeting_id = row["id"]
         title = row["title"]
         date = row["date"]
+        created_at = row["created_at"] or ""
 
         # Check which content files exist on disk
         meeting_dir = _find_meeting_dir(meeting_id, date, title)
@@ -107,6 +109,7 @@ def list_meetings(
             id=meeting_id,
             title=title or "Untitled",
             date=date or "",
+            created_at=created_at,
             has_notes=has_notes,
             has_summary=has_summary,
             has_transcript=has_transcript,

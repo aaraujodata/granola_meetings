@@ -113,6 +113,7 @@ def write_summary_md(output_dir: Path, doc: GranolaDocument, panels: list):
         "title": doc.title,
         "date": doc.date,
         "type": "summary",
+        "created_at": doc.created_at,
         "template": panel.template_slug,
         "panel_id": panel.id,
     })
@@ -136,6 +137,7 @@ def write_transcript_md(output_dir: Path, doc: GranolaDocument, transcript: list
         "title": doc.title,
         "date": doc.date,
         "type": "transcript",
+        "created_at": doc.created_at,
         "total_entries": len(transcript),
         "duration_minutes": duration,
         "speakers": speaker_labels,

@@ -15,7 +15,19 @@ function Badge({ label, active }: { label: string; active: boolean }) {
   );
 }
 
+function formatTime(isoString: string): string | null {
+  if (!isoString) return null;
+  try {
+    const d = new Date(isoString);
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return null;
+  }
+}
+
 export default function MeetingCard({ meeting }: { meeting: MeetingSummary }) {
+  const time = formatTime(meeting.created_at);
+
   return (
     <Link
       href={`/meetings/${encodeURIComponent(meeting.id)}`}
@@ -26,7 +38,9 @@ export default function MeetingCard({ meeting }: { meeting: MeetingSummary }) {
           <h3 className="truncate text-sm font-semibold text-gray-900">
             {meeting.title}
           </h3>
-          <p className="mt-1 text-xs text-gray-500">{meeting.date}</p>
+          <p className="mt-1 text-xs text-gray-500">
+            {meeting.date}{time ? ` · ${time}` : ""}
+          </p>
         </div>
       </div>
       <div className="mt-3 flex gap-2">

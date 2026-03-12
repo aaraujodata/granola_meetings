@@ -10,6 +10,7 @@ class MeetingSummary(BaseModel):
     id: str
     title: str
     date: str
+    created_at: str = ""
     has_notes: bool = False
     has_summary: bool = False
     has_transcript: bool = False

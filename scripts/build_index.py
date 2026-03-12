@@ -92,13 +92,17 @@ def index_meeting_dir(db: SearchDB, meeting_dir: Path) -> bool:
         calendar_event = ""
         workspace_id = ""
 
-        # Re-read notes.md for full metadata
-        notes_path = meeting_dir / "notes.md"
-        if notes_path.exists():
-            meta, _ = parse_frontmatter(notes_path.read_text(encoding="utf-8"))
-            created_at = meta.get("created_at", "")
-            updated_at = meta.get("updated_at", "")
-            calendar_event = meta.get("calendar_event", "")
+        # Read metadata from notes.md first, then fall back to any .md file
+        for candidate in ["notes.md", "summary.md", "transcript.md"]:
+            candidate_path = meeting_dir / candidate
+            if candidate_path.exists():
+                meta, _ = parse_frontmatter(candidate_path.read_text(encoding="utf-8"))
+                if not created_at:
+                    created_at = meta.get("created_at", "")
+                if not updated_at:
+                    updated_at = meta.get("updated_at", "")
+                if not calendar_event:
+                    calendar_event = meta.get("calendar_event", "")
 
         db.upsert_meeting(
             meeting_id=meeting_id,

@@ -2,6 +2,7 @@ export interface MeetingSummary {
   id: string;
   title: string;
   date: string;
+  created_at: string;
   has_notes: boolean;
   has_summary: boolean;
   has_transcript: boolean;
