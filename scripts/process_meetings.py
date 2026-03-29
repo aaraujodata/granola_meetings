@@ -172,8 +172,7 @@ def main():
     args = parser.parse_args()
 
     if not MEETINGS_DIR.exists():
-        log.error("No meetings/ directory. Run export first.")
-        sys.exit(1)
+        raise RuntimeError("No meetings/ directory. Run export first.")
 
     # Find all meeting directories
     meeting_dirs = sorted(MEETINGS_DIR.glob("*/*/*/"))
@@ -238,4 +237,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RuntimeError as e:
+        log.error(str(e))
+        sys.exit(1)

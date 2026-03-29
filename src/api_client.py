@@ -5,7 +5,7 @@ import time
 
 import requests
 
-from .auth import get_headers, is_token_valid, load_token
+from .auth import ensure_valid_token, get_headers, is_token_valid, load_token
 from .config import (
     BASE_API_URL,
     DOCUMENTS_PAGE_SIZE,
@@ -65,9 +65,11 @@ class GranolaClient:
                 return resp
 
             if resp.status_code == 401:
-                log.warning("Got 401 — token may have expired. Retrying with fresh token...")
-                # Token is re-loaded on next _ensure_headers() call
-                time.sleep(1)
+                log.warning("Got 401 — token may have expired. Attempting refresh...")
+                try:
+                    ensure_valid_token()
+                except RuntimeError:
+                    pass  # will fail on next iteration or max retries
                 continue
 
             if resp.status_code == 429:

@@ -119,15 +119,18 @@ async def task_export(ctx):
             **wide,
         })
         _emit_canonical_log(action="export", job_id=job_id, outcome="success", duration=duration, wide=wide)
-    except Exception as e:
+    except (Exception, SystemExit) as e:
         wide = handler.get_wide_event()
         duration = time.monotonic() - start
-        await _update_job(ctx, "failed", str(e), extra={
+        error_msg = str(e) if not isinstance(e, SystemExit) else f"Script exited with code {e.code}"
+        await _update_job(ctx, "failed", error_msg, extra={
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "duration_seconds": round(duration, 2),
             **wide,
         })
-        _emit_canonical_log(action="export", job_id=job_id, outcome="error", duration=duration, wide=wide, error=str(e))
+        _emit_canonical_log(action="export", job_id=job_id, outcome="error", duration=duration, wide=wide, error=error_msg)
+        if isinstance(e, SystemExit):
+            raise RuntimeError(error_msg) from e
         raise
     finally:
         _remove_log_handler(handler)
@@ -159,15 +162,18 @@ async def task_index(ctx):
             **wide,
         })
         _emit_canonical_log(action="index", job_id=job_id, outcome="success", duration=duration, wide=wide)
-    except Exception as e:
+    except (Exception, SystemExit) as e:
         wide = handler.get_wide_event()
         duration = time.monotonic() - start
-        await _update_job(ctx, "failed", str(e), extra={
+        error_msg = str(e) if not isinstance(e, SystemExit) else f"Script exited with code {e.code}"
+        await _update_job(ctx, "failed", error_msg, extra={
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "duration_seconds": round(duration, 2),
             **wide,
         })
-        _emit_canonical_log(action="index", job_id=job_id, outcome="error", duration=duration, wide=wide, error=str(e))
+        _emit_canonical_log(action="index", job_id=job_id, outcome="error", duration=duration, wide=wide, error=error_msg)
+        if isinstance(e, SystemExit):
+            raise RuntimeError(error_msg) from e
         raise
     finally:
         _remove_log_handler(handler)
@@ -199,15 +205,18 @@ async def task_process(ctx):
             **wide,
         })
         _emit_canonical_log(action="process", job_id=job_id, outcome="success", duration=duration, wide=wide)
-    except Exception as e:
+    except (Exception, SystemExit) as e:
         wide = handler.get_wide_event()
         duration = time.monotonic() - start
-        await _update_job(ctx, "failed", str(e), extra={
+        error_msg = str(e) if not isinstance(e, SystemExit) else f"Script exited with code {e.code}"
+        await _update_job(ctx, "failed", error_msg, extra={
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "duration_seconds": round(duration, 2),
             **wide,
         })
-        _emit_canonical_log(action="process", job_id=job_id, outcome="error", duration=duration, wide=wide, error=str(e))
+        _emit_canonical_log(action="process", job_id=job_id, outcome="error", duration=duration, wide=wide, error=error_msg)
+        if isinstance(e, SystemExit):
+            raise RuntimeError(error_msg) from e
         raise
     finally:
         _remove_log_handler(handler)
@@ -264,16 +273,19 @@ async def task_sync(ctx):
             **wide,
         })
         _emit_canonical_log(action="sync", job_id=job_id, outcome="success", duration=duration, wide=wide)
-    except Exception as e:
+    except (Exception, SystemExit) as e:
         sys.argv = original_argv
         wide = handler.get_wide_event()
         duration = time.monotonic() - start
-        await _update_job(ctx, "failed", str(e), extra={
+        error_msg = str(e) if not isinstance(e, SystemExit) else f"Script exited with code {e.code}"
+        await _update_job(ctx, "failed", error_msg, extra={
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "duration_seconds": round(duration, 2),
             **wide,
         })
-        _emit_canonical_log(action="sync", job_id=job_id, outcome="error", duration=duration, wide=wide, error=str(e))
+        _emit_canonical_log(action="sync", job_id=job_id, outcome="error", duration=duration, wide=wide, error=error_msg)
+        if isinstance(e, SystemExit):
+            raise RuntimeError(error_msg) from e
         raise
     finally:
         _remove_log_handler(handler)
@@ -327,16 +339,19 @@ async def task_refresh(ctx, params: dict | None = None):
             **wide,
         })
         _emit_canonical_log(action="refresh", job_id=job_id, outcome="success", duration=duration, wide=wide, params=params)
-    except Exception as e:
+    except (Exception, SystemExit) as e:
         sys.argv = original_argv
         wide = handler.get_wide_event()
         duration = time.monotonic() - start
-        await _update_job(ctx, "failed", str(e), extra={
+        error_msg = str(e) if not isinstance(e, SystemExit) else f"Script exited with code {e.code}"
+        await _update_job(ctx, "failed", error_msg, extra={
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "duration_seconds": round(duration, 2),
             **wide,
         })
-        _emit_canonical_log(action="refresh", job_id=job_id, outcome="error", duration=duration, wide=wide, params=params, error=str(e))
+        _emit_canonical_log(action="refresh", job_id=job_id, outcome="error", duration=duration, wide=wide, params=params, error=error_msg)
+        if isinstance(e, SystemExit):
+            raise RuntimeError(error_msg) from e
         raise
     finally:
         _remove_log_handler(handler)

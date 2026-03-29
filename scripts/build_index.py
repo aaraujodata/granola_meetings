@@ -135,8 +135,7 @@ def main():
         conn.commit()
 
     if not MEETINGS_DIR.exists():
-        log.error("No meetings/ directory found. Run export first.")
-        sys.exit(1)
+        raise RuntimeError("No meetings/ directory found. Run export first.")
 
     # Walk all meeting directories (meetings/YYYY/MM/YYYY-MM-DD_slug/)
     meeting_dirs = sorted(MEETINGS_DIR.glob("*/*/*/"))
@@ -170,4 +169,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RuntimeError as e:
+        log.error(str(e))
+        sys.exit(1)

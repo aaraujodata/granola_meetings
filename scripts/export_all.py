@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.api_client import GranolaClient, GranolaAPIError
-from src.auth import is_token_valid, get_token_info
+from src.auth import ensure_valid_token
 from src.config import MEETINGS_DIR, EXPORT_PROGRESS_PATH, DB_DIR
 from src.converters import (
     format_transcript,
@@ -220,13 +220,8 @@ def main():
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    # ── Validate token ─────────────────────────────────────────────────
-    if not is_token_valid():
-        info = get_token_info()
-        log.error("Token expired or invalid. Remaining: %.0f seconds", info["remaining_seconds"])
-        log.error("Open Granola desktop app to refresh the token, then retry.")
-        sys.exit(1)
-
+    # ── Validate token (refreshes automatically if near-expiry) ─────────
+    ensure_valid_token()
     log.info("Token valid. Starting export...")
 
     client = GranolaClient()
@@ -294,4 +289,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RuntimeError as e:
+        sys.exit(1)
