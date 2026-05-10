@@ -40,7 +40,7 @@ export interface SearchResult {
 }
 
 export type PipelineAction = "export" | "index" | "process" | "sync" | "refresh";
-export type JobStatusType = "queued" | "running" | "completed" | "failed";
+export type JobStatusType = "queued" | "running" | "completed" | "failed" | "cancelled";
 
 export interface PipelineParams {
   since?: string;

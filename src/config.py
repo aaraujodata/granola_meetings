@@ -6,6 +6,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GRANOLA_SUPPORT_DIR = Path.home() / "Library" / "Application Support" / "Granola"
 SUPABASE_JSON = GRANOLA_SUPPORT_DIR / "supabase.json"
+STORED_ACCOUNTS_JSON = GRANOLA_SUPPORT_DIR / "stored-accounts.json"
 CACHE_V3_JSON = GRANOLA_SUPPORT_DIR / "cache-v3.json"
 
 # Output directories (all relative to repo root)
@@ -35,3 +36,9 @@ RETRY_BACKOFF_BASE_S = 1.0     # 1s, 2s, 4s exponential backoff
 
 # ── Pagination ─────────────────────────────────────────────────────────────
 DOCUMENTS_PAGE_SIZE = 100
+
+# ── Job control (queue cancellation) ───────────────────────────────────────
+# Redis key prefix for cooperative cancel flags. See src/cancel.py.
+CANCEL_KEY_PREFIX = "granola:cancel:"
+# TTL so a leaked flag can never block a future job indefinitely.
+CANCEL_TTL_SECONDS = 3600

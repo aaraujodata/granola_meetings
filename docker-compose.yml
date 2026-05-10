@@ -26,7 +26,10 @@ services:
       - ./db:/app/db
       - ./meetings:/app/meetings
       - ./exports:/app/exports
-      # Granola auth token (read-only from host)
+      # Granola auth tokens (read-only from host). Newer Granola builds write
+      # the live WorkOS tokens to stored-accounts.json; supabase.json is the
+      # legacy location and is kept mounted as a fallback.
+      - ~/Library/Application Support/Granola/stored-accounts.json:/root/Library/Application Support/Granola/stored-accounts.json:ro
       - ~/Library/Application Support/Granola/supabase.json:/root/Library/Application Support/Granola/supabase.json:ro
       # Custom CA certificates for corporate proxy/SSL (drop .pem files in .ca-certs/)
       - ./.ca-certs:/app/.ca-certs:ro
@@ -52,7 +55,10 @@ services:
       - ./db:/app/db
       - ./meetings:/app/meetings
       - ./exports:/app/exports
-      # Granola auth token (read-only from host)
+      # Granola auth tokens (read-only from host). Newer Granola builds write
+      # the live WorkOS tokens to stored-accounts.json; supabase.json is the
+      # legacy location and is kept mounted as a fallback.
+      - ~/Library/Application Support/Granola/stored-accounts.json:/root/Library/Application Support/Granola/stored-accounts.json:ro
       - ~/Library/Application Support/Granola/supabase.json:/root/Library/Application Support/Granola/supabase.json:ro
       # Custom CA certificates for corporate proxy/SSL (drop .pem files in .ca-certs/)
       - ./.ca-certs:/app/.ca-certs:ro

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { triggerPipeline, getJobs, getJobLogs } from "@/lib/api";
+import { triggerPipeline, getJobs, getJobLogs, cancelJob } from "@/lib/api";
 import { useJobPoller, useJobLogPoller } from "@/hooks/useJobPoller";
 import PipelineControls from "@/components/PipelineControls";
 import JobStatusBadge from "@/components/JobStatusBadge";
@@ -54,12 +54,28 @@ export default function PipelinePage() {
     fetchJobs();
   }, []);
 
+  const isTerminal = (s: string | undefined) =>
+    s === "completed" || s === "failed" || s === "cancelled";
+
   useEffect(() => {
-    if (polledJob && (polledJob.status === "completed" || polledJob.status === "failed")) {
+    if (polledJob && isTerminal(polledJob.status)) {
       setActiveJobId(null);
       fetchJobs();
     }
   }, [polledJob]);
+
+  const [cancelling, setCancelling] = useState(false);
+  const handleCancel = async () => {
+    if (!polledJob) return;
+    setCancelling(true);
+    try {
+      await cancelJob(polledJob.job_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to cancel job");
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   const handleTrigger = async (action: PipelineAction, params?: PipelineParams) => {
     setError(null);
@@ -114,12 +130,23 @@ export default function PipelinePage() {
               </span>
               <JobStatusBadge status={polledJob.status} />
             </div>
-            <button
-              onClick={() => setShowLogs((v) => !v)}
-              className="text-xs text-blue-600 hover:text-blue-800"
-            >
-              {showLogs ? "Hide Logs" : "Show Logs"}
-            </button>
+            <div className="flex items-center gap-3">
+              {isActive && (
+                <button
+                  onClick={handleCancel}
+                  disabled={cancelling}
+                  className="rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                >
+                  {cancelling ? "Cancelling…" : "Cancel"}
+                </button>
+              )}
+              <button
+                onClick={() => setShowLogs((v) => !v)}
+                className="text-xs text-blue-600 hover:text-blue-800"
+              >
+                {showLogs ? "Hide Logs" : "Show Logs"}
+              </button>
+            </div>
           </div>
 
           {polledJob.result && (
@@ -132,7 +159,7 @@ export default function PipelinePage() {
             <LogViewer
               logs={logs}
               isStreaming={isStreaming}
-              isTerminal={polledJob.status === "completed" || polledJob.status === "failed"}
+              isTerminal={isTerminal(polledJob.status)}
             />
           )}
         </div>

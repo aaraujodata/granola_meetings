@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.api_client import GranolaClient, GranolaAPIError
 from src.auth import is_token_valid, get_token_info
+from src.cancel import JobCancelled, check_cancelled
 from src.config import MEETINGS_DIR, EXPORT_PROGRESS_PATH, DB_DIR
 from src.converters import (
     format_transcript,
@@ -254,14 +255,24 @@ def main():
         log.info("Limiting to %d documents", len(documents))
 
     # ── Load progress for resume ───────────────────────────────────────
-    # Bypass resume when the user explicitly filters with --since or --ids
-    skip_resume = args.no_resume or args.since or args.ids
-    completed = set() if skip_resume else load_progress()
-    remaining = [d for d in documents if d.id not in completed]
+    # `completed` is the union of every meeting we've ever successfully
+    # exported. We always load it (unless --no-resume) so that save_progress
+    # never narrows the file — a `--since` refresh would otherwise overwrite
+    # historical resume state with just the date-filtered slice.
+    #
+    # Explicit filters (--since / --ids) still bypass the "skip already
+    # exported" optimisation so the user can force a re-export of a window;
+    # they just don't wipe the accumulated index.
+    completed = set() if args.no_resume else load_progress()
+    skip_filter = args.no_resume or args.since or args.ids
+    if skip_filter:
+        remaining = list(documents)
+    else:
+        remaining = [d for d in documents if d.id not in completed]
 
-    if skip_resume and not args.no_resume:
-        log.info("Explicit filter detected (--since/--ids), bypassing resume progress")
-    if completed:
+    if skip_filter and not args.no_resume:
+        log.info("Explicit filter detected (--since/--ids), re-exporting matched documents")
+    if completed and not skip_filter:
         log.info("Resuming: %d already exported, %d remaining", len(completed), len(remaining))
 
     # ── Export each meeting ────────────────────────────────────────────
@@ -269,18 +280,31 @@ def main():
     error_count = 0
 
     for i, doc in enumerate(remaining):
+        # Cooperative cancel: raise JobCancelled at the meeting boundary so
+        # the worker can mark the job as cancelled. Doc-level idempotency
+        # (no `completed` entry until full success) protects mid-meeting
+        # interruptions; per-meeting save_progress() below caps the loss at
+        # zero confirmed exports.
+        try:
+            check_cancelled()
+        except JobCancelled:
+            log.warning("Cancel requested — stopping export after %d/%d", i, len(remaining))
+            save_progress(completed)
+            raise
+
         title_display = (doc.title or "Untitled")[:60]
         log.info("[%d/%d] Exporting: %s (%s)", i + 1, len(remaining), title_display, doc.date)
 
         if export_meeting(client, doc):
             completed.add(doc.id)
             success_count += 1
+            # Persist after every successful meeting so a cancel/crash can
+            # never lose more than one confirmation. The progress file is
+            # small (UUIDs) — fsync cost is dwarfed by the API call we just
+            # made.
+            save_progress(completed)
         else:
             error_count += 1
-
-        # Save progress periodically
-        if (i + 1) % 10 == 0:
-            save_progress(completed)
 
     # ── Final save and report ──────────────────────────────────────────
     save_progress(completed)

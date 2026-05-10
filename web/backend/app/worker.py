@@ -2,11 +2,16 @@
 
 Each task emits a canonical wide event (one structured log line per job)
 at completion, following the wide events / canonical log line pattern.
+
+Cancellation: tasks check `granola:cancel:{job_id}` (see src/cancel.py) at
+safe checkpoints. A `JobCancelled` exception terminates the task and is
+recorded as status="cancelled" rather than "failed".
 """
 
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -19,6 +24,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from app.dependencies import REDIS_URL, _parse_redis_settings
 from app.log_handler import JobLogHandler
+from src.cancel import JobCancelled, clear_cancel_async, is_cancelled_async
 
 logging.basicConfig(
     level=logging.INFO,
@@ -65,12 +71,7 @@ async def _update_job(ctx, status: str, result: str | None = None, extra: dict |
 
 def _emit_canonical_log(*, action: str, job_id: str, outcome: str, duration: float,
                         wide: dict, params: dict | None = None, error: str | None = None):
-    """Emit one structured canonical log line per job — the wide event.
-
-    This is the single observability event for the entire job execution.
-    It contains everything needed to debug or analyze the job without
-    reading individual log lines.
-    """
+    """Emit one structured canonical log line per job — the wide event."""
     event = {
         "event": "job_completed",
         "action": action,
@@ -93,32 +94,89 @@ def _emit_canonical_log(*, action: str, job_id: str, outcome: str, duration: flo
     log.info(json.dumps(event))
 
 
-async def task_export(ctx):
-    """Run scripts/export_all.main() in a thread executor."""
+def _set_job_env(job_id: str) -> dict[str, str | None]:
+    """Expose GRANOLA_JOB_ID + REDIS_URL to the script process.
+
+    Returns the previous values so the caller can restore them after the
+    script finishes (worker is long-lived, so leaked env vars across jobs
+    would let a stale flag from job A short-circuit job B).
+    """
+    prev = {
+        "GRANOLA_JOB_ID": os.environ.get("GRANOLA_JOB_ID"),
+        "REDIS_URL": os.environ.get("REDIS_URL"),
+    }
+    os.environ["GRANOLA_JOB_ID"] = job_id
+    # The script's sync redis client reads REDIS_URL too; make sure it's set.
+    os.environ["REDIS_URL"] = REDIS_URL
+    return prev
+
+
+def _restore_job_env(prev: dict[str, str | None]) -> None:
+    for k, v in prev.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+async def _raise_if_cancelled(ctx) -> None:
+    """Between-step cancel check for multi-step tasks (sync/refresh)."""
+    if await is_cancelled_async(ctx["redis"], ctx["job_id"]):
+        raise JobCancelled(f"Job {ctx['job_id']} cancelled between steps")
+
+
+async def _finalize_cancelled(ctx, *, action: str, start: float, handler: JobLogHandler,
+                              params: dict | None = None) -> None:
+    """Common terminal-state writes for a cancelled job."""
+    wide = handler.get_wide_event()
+    duration = time.monotonic() - start
+    await _update_job(ctx, "cancelled", "Cancelled by request", extra={
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "duration_seconds": round(duration, 2),
+        "current_step": None,
+        **wide,
+    })
+    _emit_canonical_log(action=action, job_id=ctx["job_id"], outcome="cancelled",
+                        duration=duration, wide=wide, params=params)
+    await clear_cancel_async(ctx["redis"], ctx["job_id"])
+
+
+async def _run_script_task(ctx, *, action: str, script_argv: list[str],
+                           import_path: tuple[str, str], success_msg: str,
+                           params: dict | None = None) -> None:
+    """Generic single-script task wrapper used by export / index / process.
+
+    `import_path` is ("scripts.export_all", "main") style. Centralizing this
+    keeps the cancel + cleanup invariants in one place.
+    """
     job_id = ctx["job_id"]
     start = time.monotonic()
     now = datetime.now(timezone.utc).isoformat()
     await _update_job(ctx, "running", extra={"started_at": now})
 
     handler = _install_log_handler(job_id)
+    original_argv = sys.argv
+    prev_env = _set_job_env(job_id)
     try:
-        from scripts.export_all import main as export_main
+        module_name, fn_name = import_path
+        module = __import__(module_name, fromlist=[fn_name])
+        script_main = getattr(module, fn_name)
+
         loop = asyncio.get_event_loop()
-        original_argv = sys.argv
-        sys.argv = ["export_all"]
-        try:
-            await loop.run_in_executor(None, export_main)
-        finally:
-            sys.argv = original_argv
+        sys.argv = script_argv
+        await loop.run_in_executor(None, script_main)
 
         wide = handler.get_wide_event()
         duration = time.monotonic() - start
-        await _update_job(ctx, "completed", "Export finished successfully", extra={
+        await _update_job(ctx, "completed", success_msg, extra={
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "duration_seconds": round(duration, 2),
             **wide,
         })
-        _emit_canonical_log(action="export", job_id=job_id, outcome="success", duration=duration, wide=wide)
+        _emit_canonical_log(action=action, job_id=job_id, outcome="success",
+                            duration=duration, wide=wide, params=params)
+    except JobCancelled:
+        await _finalize_cancelled(ctx, action=action, start=start, handler=handler, params=params)
     except Exception as e:
         wide = handler.get_wide_event()
         duration = time.monotonic() - start
@@ -127,90 +185,43 @@ async def task_export(ctx):
             "duration_seconds": round(duration, 2),
             **wide,
         })
-        _emit_canonical_log(action="export", job_id=job_id, outcome="error", duration=duration, wide=wide, error=str(e))
+        _emit_canonical_log(action=action, job_id=job_id, outcome="error",
+                            duration=duration, wide=wide, params=params, error=str(e))
         raise
     finally:
+        sys.argv = original_argv
+        _restore_job_env(prev_env)
         _remove_log_handler(handler)
+
+
+async def task_export(ctx):
+    """Run scripts/export_all.main() in a thread executor."""
+    await _run_script_task(
+        ctx, action="export",
+        script_argv=["export_all"],
+        import_path=("scripts.export_all", "main"),
+        success_msg="Export finished successfully",
+    )
 
 
 async def task_index(ctx):
     """Run scripts/build_index.main() in a thread executor."""
-    job_id = ctx["job_id"]
-    start = time.monotonic()
-    now = datetime.now(timezone.utc).isoformat()
-    await _update_job(ctx, "running", extra={"started_at": now})
-
-    handler = _install_log_handler(job_id)
-    try:
-        from scripts.build_index import main as index_main
-        loop = asyncio.get_event_loop()
-        original_argv = sys.argv
-        sys.argv = ["build_index"]
-        try:
-            await loop.run_in_executor(None, index_main)
-        finally:
-            sys.argv = original_argv
-
-        wide = handler.get_wide_event()
-        duration = time.monotonic() - start
-        await _update_job(ctx, "completed", "Index rebuild finished successfully", extra={
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-            "duration_seconds": round(duration, 2),
-            **wide,
-        })
-        _emit_canonical_log(action="index", job_id=job_id, outcome="success", duration=duration, wide=wide)
-    except Exception as e:
-        wide = handler.get_wide_event()
-        duration = time.monotonic() - start
-        await _update_job(ctx, "failed", str(e), extra={
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-            "duration_seconds": round(duration, 2),
-            **wide,
-        })
-        _emit_canonical_log(action="index", job_id=job_id, outcome="error", duration=duration, wide=wide, error=str(e))
-        raise
-    finally:
-        _remove_log_handler(handler)
+    await _run_script_task(
+        ctx, action="index",
+        script_argv=["build_index"],
+        import_path=("scripts.build_index", "main"),
+        success_msg="Index rebuild finished successfully",
+    )
 
 
 async def task_process(ctx):
     """Run scripts/process_meetings.main() in a thread executor."""
-    job_id = ctx["job_id"]
-    start = time.monotonic()
-    now = datetime.now(timezone.utc).isoformat()
-    await _update_job(ctx, "running", extra={"started_at": now})
-
-    handler = _install_log_handler(job_id)
-    try:
-        from scripts.process_meetings import main as process_main
-        loop = asyncio.get_event_loop()
-        original_argv = sys.argv
-        sys.argv = ["process_meetings"]
-        try:
-            await loop.run_in_executor(None, process_main)
-        finally:
-            sys.argv = original_argv
-
-        wide = handler.get_wide_event()
-        duration = time.monotonic() - start
-        await _update_job(ctx, "completed", "Processing finished successfully", extra={
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-            "duration_seconds": round(duration, 2),
-            **wide,
-        })
-        _emit_canonical_log(action="process", job_id=job_id, outcome="success", duration=duration, wide=wide)
-    except Exception as e:
-        wide = handler.get_wide_event()
-        duration = time.monotonic() - start
-        await _update_job(ctx, "failed", str(e), extra={
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-            "duration_seconds": round(duration, 2),
-            **wide,
-        })
-        _emit_canonical_log(action="process", job_id=job_id, outcome="error", duration=duration, wide=wide, error=str(e))
-        raise
-    finally:
-        _remove_log_handler(handler)
+    await _run_script_task(
+        ctx, action="process",
+        script_argv=["process_meetings"],
+        import_path=("scripts.process_meetings", "main"),
+        success_msg="Processing finished successfully",
+    )
 
 
 async def task_sync(ctx):
@@ -226,10 +237,12 @@ async def task_sync(ctx):
 
     handler = _install_log_handler(job_id)
     original_argv = sys.argv
+    prev_env = _set_job_env(job_id)
     try:
         loop = asyncio.get_event_loop()
 
         # Step 1: Export
+        await _raise_if_cancelled(ctx)
         await _update_job(ctx, "running", extra={"current_step": "export"})
         from scripts.export_all import main as export_main
         sys.argv = ["export_all"]
@@ -240,6 +253,7 @@ async def task_sync(ctx):
         })
 
         # Step 2: Index
+        await _raise_if_cancelled(ctx)
         from scripts.build_index import main as index_main
         sys.argv = ["build_index"]
         await loop.run_in_executor(None, index_main)
@@ -249,11 +263,11 @@ async def task_sync(ctx):
         })
 
         # Step 3: Process
+        await _raise_if_cancelled(ctx)
         from scripts.process_meetings import main as process_main
         sys.argv = ["process_meetings"]
         await loop.run_in_executor(None, process_main)
 
-        sys.argv = original_argv
         wide = handler.get_wide_event()
         duration = time.monotonic() - start
         await _update_job(ctx, "completed", "Full sync finished successfully", extra={
@@ -264,8 +278,9 @@ async def task_sync(ctx):
             **wide,
         })
         _emit_canonical_log(action="sync", job_id=job_id, outcome="success", duration=duration, wide=wide)
+    except JobCancelled:
+        await _finalize_cancelled(ctx, action="sync", start=start, handler=handler)
     except Exception as e:
-        sys.argv = original_argv
         wide = handler.get_wide_event()
         duration = time.monotonic() - start
         await _update_job(ctx, "failed", str(e), extra={
@@ -276,6 +291,8 @@ async def task_sync(ctx):
         _emit_canonical_log(action="sync", job_id=job_id, outcome="error", duration=duration, wide=wide, error=str(e))
         raise
     finally:
+        sys.argv = original_argv
+        _restore_job_env(prev_env)
         _remove_log_handler(handler)
 
 
@@ -292,10 +309,12 @@ async def task_refresh(ctx, params: dict | None = None):
 
     handler = _install_log_handler(job_id)
     original_argv = sys.argv
+    prev_env = _set_job_env(job_id)
     try:
         loop = asyncio.get_event_loop()
 
         # Step 1: Export with --since (and optional --limit)
+        await _raise_if_cancelled(ctx)
         await _update_job(ctx, "running", extra={"current_step": "export"})
         from scripts.export_all import main as export_main
         argv = ["export_all"]
@@ -311,11 +330,11 @@ async def task_refresh(ctx, params: dict | None = None):
         })
 
         # Step 2: Rebuild index
+        await _raise_if_cancelled(ctx)
         from scripts.build_index import main as index_main
         sys.argv = ["build_index", "--rebuild"]
         await loop.run_in_executor(None, index_main)
 
-        sys.argv = original_argv
         wide = handler.get_wide_event()
         duration = time.monotonic() - start
         since_label = params.get("since", "") if params else ""
@@ -327,8 +346,9 @@ async def task_refresh(ctx, params: dict | None = None):
             **wide,
         })
         _emit_canonical_log(action="refresh", job_id=job_id, outcome="success", duration=duration, wide=wide, params=params)
+    except JobCancelled:
+        await _finalize_cancelled(ctx, action="refresh", start=start, handler=handler, params=params)
     except Exception as e:
-        sys.argv = original_argv
         wide = handler.get_wide_event()
         duration = time.monotonic() - start
         await _update_job(ctx, "failed", str(e), extra={
@@ -339,6 +359,8 @@ async def task_refresh(ctx, params: dict | None = None):
         _emit_canonical_log(action="refresh", job_id=job_id, outcome="error", duration=duration, wide=wide, params=params, error=str(e))
         raise
     finally:
+        sys.argv = original_argv
+        _restore_job_env(prev_env)
         _remove_log_handler(handler)
 
 
@@ -349,7 +371,6 @@ async def on_startup(ctx):
 
     # Reconcile stale jobs: if ARQ already failed a job but our tracking still says
     # queued/running, mark it as failed so the UI reflects the real state.
-    # Note: ARQ's redis (ctx["redis"]) returns bytes, not strings.
     redis = ctx["redis"]
     raw_ids = await redis.lrange("granola:recent_jobs", 0, 49)
     for raw_jid in raw_ids:
@@ -361,7 +382,6 @@ async def on_startup(ctx):
         data = json.loads(raw_str)
         if data["status"] not in ("queued", "running"):
             continue
-        # Check if ARQ already has a result for this job (meaning it finished/failed)
         arq_result = await redis.get(f"arq:result:{jid}")
         if arq_result:
             now_iso = datetime.now(timezone.utc).isoformat()
@@ -371,7 +391,6 @@ async def on_startup(ctx):
             data["result"] = reason
             data["completed_at"] = now_iso
             await redis.set(f"{JOB_KEY_PREFIX}{jid}", json.dumps(data), ex=86400)
-            # Write log entries so the UI has something to show
             log_key = f"{JOB_KEY_PREFIX}{jid}:logs"
             log_entries = [
                 json.dumps({"timestamp": now_iso, "level": "ERROR", "message": reason, "logger": "arq.worker"}),

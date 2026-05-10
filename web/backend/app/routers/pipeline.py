@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.dependencies import get_redis, get_arq_pool
 from app.schemas import PipelineAction, PipelineParams, JobResponse, JobStatus, LogEntry, JobLogsResponse
+from src.cancel import request_cancel_async
 
 router = APIRouter(tags=["pipeline"])
 
@@ -89,6 +90,45 @@ async def get_job_status(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
 
     return JobResponse(**json.loads(raw))
+
+
+@router.post("/pipeline/jobs/{job_id}/cancel", response_model=JobResponse)
+async def cancel_job(job_id: str):
+    """Request cancellation of a queued or running job.
+
+    Cancellation is cooperative: the worker checks `granola:cancel:{job_id}`
+    at safe checkpoints (between meetings, between pipeline steps). The
+    job's status only flips to `cancelled` once the worker has observed
+    the flag — so this endpoint may return a job still in `running` state.
+    """
+    redis = await get_redis()
+    raw = await redis.get(f"{JOB_KEY_PREFIX}{job_id}")
+
+    if not raw:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    data = json.loads(raw)
+    status = data.get("status")
+
+    # Already terminal — nothing to cancel.
+    if status in ("completed", "failed", "cancelled"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job is already {status}; nothing to cancel",
+        )
+
+    await request_cancel_async(redis, job_id)
+
+    # If the job hasn't been picked up by the worker yet, flip it to
+    # cancelled right here. ARQ will still attempt to invoke the task, but
+    # the worker's first cancel check will short-circuit it.
+    if status == "queued":
+        data["status"] = JobStatus.cancelled.value
+        data["result"] = "Cancelled before execution"
+        data["completed_at"] = datetime.now(timezone.utc).isoformat()
+        await redis.set(f"{JOB_KEY_PREFIX}{job_id}", json.dumps(data), ex=86400)
+
+    return JobResponse(**data)
 
 
 @router.get("/pipeline/jobs/{job_id}/logs", response_model=JobLogsResponse)

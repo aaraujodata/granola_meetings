@@ -2,9 +2,41 @@
 
 ## Token Location
 
+Newer Granola builds (observed 2026-05) write the live WorkOS tokens to
+`stored-accounts.json`. `supabase.json` is the legacy path and may go stale
+while the app keeps running. Read `stored-accounts.json` first and fall back
+to `supabase.json` only if it's absent.
+
 ```
-~/Library/Application Support/Granola/supabase.json
+~/Library/Application Support/Granola/stored-accounts.json  (current)
+~/Library/Application Support/Granola/supabase.json         (legacy fallback)
 ```
+
+### stored-accounts.json structure (current)
+
+Two layers of JSON-string encoding:
+
+```json
+{
+  "accounts": "<json-string>"      // outer
+}
+// inner:
+[
+  {
+    "userId": "...",
+    "email": "...",
+    "tokens": "<json-string>",     // same shape as legacy workos_tokens
+    "userInfo": "<json-string>",
+    "savedAt": 1773761380368        // ms since epoch; pick the freshest account
+  }
+]
+```
+
+The inner `tokens` JSON has the same keys as the legacy `workos_tokens`
+described below (`access_token`, `expires_in`, `refresh_token`, `obtained_at`,
+etc.) plus `sign_in_method`.
+
+### supabase.json structure (legacy)
 
 ## File Structure
 

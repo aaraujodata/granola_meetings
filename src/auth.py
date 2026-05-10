@@ -1,52 +1,84 @@
-"""Token loading, validation, and refresh for Granola's WorkOS auth."""
+"""Token loading, validation, and refresh for Granola's WorkOS auth.
+
+Granola stores the live WorkOS tokens in `stored-accounts.json` (newer builds).
+Older builds wrote tokens to `supabase.json` under the `workos_tokens` key.
+We prefer `stored-accounts.json` and fall back to `supabase.json`.
+"""
 
 import json
 import logging
 import time
 
-from .config import SUPABASE_JSON
+from .config import STORED_ACCOUNTS_JSON, SUPABASE_JSON
 
 log = logging.getLogger(__name__)
 
 
-def _read_supabase() -> dict:
-    """Read and return the raw supabase.json contents."""
+def _read_stored_accounts_tokens() -> dict | None:
+    """Read WorkOS tokens from `stored-accounts.json` (current Granola location).
+
+    Returns the parsed tokens dict, or None if the file is absent / has no accounts.
+    """
+    if not STORED_ACCOUNTS_JSON.exists():
+        return None
+    with open(STORED_ACCOUNTS_JSON, "r") as f:
+        outer = json.load(f)
+    accounts_raw = outer.get("accounts")
+    if not accounts_raw:
+        return None
+    accounts = json.loads(accounts_raw) if isinstance(accounts_raw, str) else accounts_raw
+    if not accounts:
+        return None
+    # Pick the most recently saved account.
+    account = max(accounts, key=lambda a: a.get("savedAt", 0))
+    tokens_raw = account.get("tokens")
+    if not tokens_raw:
+        return None
+    return json.loads(tokens_raw) if isinstance(tokens_raw, str) else tokens_raw
+
+
+def _read_supabase_tokens() -> dict | None:
+    """Read WorkOS tokens from legacy `supabase.json`."""
+    if not SUPABASE_JSON.exists():
+        return None
     with open(SUPABASE_JSON, "r") as f:
-        return json.load(f)
+        raw = json.load(f)
+    wt = raw.get("workos_tokens")
+    if not wt:
+        return None
+    return json.loads(wt) if isinstance(wt, str) else wt
 
 
-def _parse_workos_tokens(raw: dict) -> dict:
-    """Parse the workos_tokens JSON string from supabase.json."""
-    wt = raw.get("workos_tokens", "{}")
-    if isinstance(wt, str):
-        return json.loads(wt)
-    return wt
+def _read_tokens() -> dict:
+    """Return the freshest WorkOS tokens available, preferring stored-accounts.json.
+
+    If both files exist, the one with the larger `obtained_at` wins so we never
+    fall back to a stale legacy file when the current one is newer.
+    """
+    new = _read_stored_accounts_tokens()
+    old = _read_supabase_tokens()
+    if new and old:
+        return new if new.get("obtained_at", 0) >= old.get("obtained_at", 0) else old
+    if new:
+        return new
+    if old:
+        return old
+    raise FileNotFoundError(
+        f"No Granola token file found at {STORED_ACCOUNTS_JSON} or {SUPABASE_JSON}"
+    )
 
 
 def load_token() -> str:
-    """Load the current access token from supabase.json.
-
-    Returns the raw JWT string.
-    Raises FileNotFoundError if supabase.json is missing.
-    Raises KeyError if the expected keys are absent.
-    """
-    raw = _read_supabase()
-    tokens = _parse_workos_tokens(raw)
+    """Load the current access token. Returns the raw JWT string."""
+    tokens = _read_tokens()
     access_token = tokens["access_token"]
     log.debug("Loaded access token (len=%d)", len(access_token))
     return access_token
 
 
 def is_token_valid(buffer_seconds: int = 300) -> bool:
-    """Check whether the current token is still valid.
-
-    Args:
-        buffer_seconds: Safety margin before actual expiry (default 5 min).
-
-    Returns True if the token has not yet expired (minus buffer).
-    """
-    raw = _read_supabase()
-    tokens = _parse_workos_tokens(raw)
+    """Check whether the current token is still valid (with safety buffer)."""
+    tokens = _read_tokens()
 
     obtained_at_ms = tokens.get("obtained_at", 0)
     expires_in_s = tokens.get("expires_in", 0)
@@ -77,8 +109,7 @@ def get_headers() -> dict:
 
 def get_token_info() -> dict:
     """Return diagnostic info about the current token (no secrets)."""
-    raw = _read_supabase()
-    tokens = _parse_workos_tokens(raw)
+    tokens = _read_tokens()
 
     obtained_at_ms = tokens.get("obtained_at", 0)
     expires_in_s = tokens.get("expires_in", 0)

@@ -25,7 +25,7 @@ export function useJobPoller(jobId: string | null) {
         setJob(data);
         setError(null);
 
-        if (data.status === "completed" || data.status === "failed") {
+        if (data.status === "completed" || data.status === "failed" || data.status === "cancelled") {
           if (intervalRef.current) {
             clearInterval(intervalRef.current);
             intervalRef.current = null;
@@ -101,7 +101,7 @@ export function useJobLogPoller(jobId: string | null, jobStatus?: string) {
 
   // Stop polling when job reaches terminal status
   useEffect(() => {
-    if (jobStatus === "completed" || jobStatus === "failed") {
+    if (jobStatus === "completed" || jobStatus === "failed" || jobStatus === "cancelled") {
       // Do one final fetch then stop
       if (jobId) {
         getJobLogs(jobId, cursorRef.current).then((data) => {

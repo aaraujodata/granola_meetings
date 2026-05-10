@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.cancel import JobCancelled, check_cancelled
 from src.config import MEETINGS_DIR
 from src.processor import extract_meeting_intelligence
 
@@ -206,6 +207,12 @@ def main():
     errors = 0
 
     for i, meeting_dir in enumerate(meeting_dirs):
+        try:
+            check_cancelled()
+        except JobCancelled:
+            log.warning("Cancel requested — stopping processing after %d/%d", i, len(meeting_dirs))
+            raise
+
         log.info("[%d/%d] %s", i + 1, len(meeting_dirs), meeting_dir.name)
 
         meta, notes, summary, transcript = read_meeting_content(meeting_dir)

@@ -66,6 +66,12 @@ export function getJobStatus(jobId: string): Promise<JobResponse> {
   return fetchJSON(`${BASE}/pipeline/jobs/${encodeURIComponent(jobId)}`);
 }
 
+export function cancelJob(jobId: string): Promise<JobResponse> {
+  return fetchJSON(`${BASE}/pipeline/jobs/${encodeURIComponent(jobId)}/cancel`, {
+    method: "POST",
+  });
+}
+
 export function getJobLogs(jobId: string, after = 0, limit = 200): Promise<JobLogsResponse> {
   return fetchJSON(`${BASE}/pipeline/jobs/${encodeURIComponent(jobId)}/logs?after=${after}&limit=${limit}`);
 }
