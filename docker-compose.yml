@@ -26,6 +26,13 @@ services:
       - ./db:/app/db
       - ./meetings:/app/meetings
       - ./exports:/app/exports
+      # Mount source code so edits take effect without a full image rebuild.
+      # The Dockerfile still COPYs these at build time so the image is
+      # self-contained for production; the mount overlays for dev.
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+      - ./web/backend:/app/web/backend
+      - ./granola_pipeline.py:/app/granola_pipeline.py
       # Granola auth tokens (read-only from host). Newer Granola builds write
       # the live WorkOS tokens to stored-accounts.json; supabase.json is the
       # legacy location and is kept mounted as a fallback.
@@ -45,6 +52,8 @@ services:
       --reload-dir /app/src
 
   # ── ARQ worker (processes queued jobs) ──────────────────────────
+  # NOTE: arq has no hot reload. After editing src/, scripts/, or
+  # web/backend/, run `docker compose restart worker` to pick up changes.
   worker:
     build:
       context: .
@@ -55,6 +64,14 @@ services:
       - ./db:/app/db
       - ./meetings:/app/meetings
       - ./exports:/app/exports
+      # Mount source code so edits take effect on `restart worker` without
+      # a full image rebuild. The Dockerfile still COPYs these at build time
+      # so the image is self-contained for production; the mount overlays
+      # for dev.
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+      - ./web/backend:/app/web/backend
+      - ./granola_pipeline.py:/app/granola_pipeline.py
       # Granola auth tokens (read-only from host). Newer Granola builds write
       # the live WorkOS tokens to stored-accounts.json; supabase.json is the
       # legacy location and is kept mounted as a fallback.

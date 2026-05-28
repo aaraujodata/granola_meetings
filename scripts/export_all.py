@@ -20,6 +20,7 @@ from pathlib import Path
 # Ensure repo root is on sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.api_client import GranolaClient, GranolaAPIError
 from src.auth import ensure_valid_token
 from src.cancel import JobCancelled, check_cancelled
 from src.config import MEETINGS_DIR, EXPORT_PROGRESS_PATH, DB_DIR
