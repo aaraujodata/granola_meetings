@@ -106,14 +106,24 @@ render-video: ## Render the promo video to video/out/promo.mp4
 # ─── SSL / Corporate proxy ────────────────────────────────────────
 
 .PHONY: setup-ssl
-setup-ssl: ## Export corporate CA certs from macOS keychain for Docker (Zscaler/NortonLifeLock)
+setup-ssl: ## Export corporate CA certs from macOS keychain for Docker (Gen Digital/NortonLifeLock/Zscaler)
 	@mkdir -p .ca-certs
 	@echo "Searching macOS keychain for corporate CA certificates..."
-	@security find-certificate -a -c "NortonLifeLock" -p /Library/Keychains/System.keychain > .ca-certs/corporate-ca.pem 2>/dev/null \
-		&& echo "Exported $$(grep -c 'BEGIN CERTIFICATE' .ca-certs/corporate-ca.pem) certificate(s) to .ca-certs/corporate-ca.pem" \
-		|| (echo "No NortonLifeLock/Zscaler CA found in system keychain." && echo "If you have a different corporate CA, copy the .pem file to .ca-certs/ manually." && rm -f .ca-certs/corporate-ca.pem)
+	@{ \
+		security find-certificate -a -c "Gen Digital Inc. Root CA" -p 2>/dev/null || true; \
+		security find-certificate -a -c "NortonLifeLock" -p 2>/dev/null || true; \
+	} > .ca-certs/corporate-ca.pem
+	@count=$$(grep -c 'BEGIN CERTIFICATE' .ca-certs/corporate-ca.pem 2>/dev/null || true); \
+		if [ "$$count" -gt 0 ]; then \
+			echo "Exported $$count certificate(s) to .ca-certs/corporate-ca.pem"; \
+		else \
+			echo "No Gen Digital/NortonLifeLock/Zscaler CA found in the macOS keychain."; \
+			echo "If you have a different corporate CA, copy the .pem file to .ca-certs/ manually."; \
+			rm -f .ca-certs/corporate-ca.pem; \
+			exit 1; \
+		fi
 	@echo ""
-	@echo "Run 'make down && make up' to rebuild containers with the CA bundle."
+	@echo "Run 'docker compose restart backend worker' to reload the CA bundle."
 
 # ─── Help ────────────────────────────────────────────────────────
 
